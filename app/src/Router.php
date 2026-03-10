@@ -67,15 +67,17 @@ class Router
 
             // API route - uses URLProcessor in API mode
             $r->addRoute('GET', '/api/{url:.+}', function($vars) {
-                $url = urldecode($vars['url']);
+                require_once __DIR__ . '/../config.php';
                 
-                if (!preg_match('#^https?://#', $url)) {
-                    $url = 'https://' . $url;
-                }
+                $processed = $this->processUrlRoute($vars['url'], true);
                 
-                if (filter_var($url, FILTER_VALIDATE_URL)) {
-                    $sanitizedUrl = $this->sanitizeUrl($url);
-                    $processor = new URLProcessor($sanitizedUrl, true);
+                if ($processed['valid']) {
+                    if ($processed['needsRedirect']) {
+                        header('Location: ' . SITE_URL . '/api/' . $processed['url']);
+                        exit;
+                    }
+                    
+                    $processor = new URLProcessor($processed['url'], true);
                     $processor->process();
                 } else {
                     header('Location: /?message=INVALID_URL');
@@ -93,28 +95,15 @@ class Router
             $r->addRoute('GET', '/p/{url:.+}', function($vars) {
                 require_once __DIR__ . '/../config.php';
                 
-                $url = urldecode($vars['url']);
+                $processed = $this->processUrlRoute($vars['url'], true);
                 
-                $originalUrl = $vars['url'];
-                $needsRedirect = false;
-                
-                if ($originalUrl !== $url || preg_match('#^https?://#', $url)) {
-                    $needsRedirect = true;
-                }
-                
-                if (!preg_match('#^https?://#', $url)) {
-                    $url = 'https://' . $url;
-                }
-                
-                if (filter_var($url, FILTER_VALIDATE_URL)) {
-                    $sanitizedUrl = $this->sanitizeUrl($url);
-                    
-                    if ($needsRedirect && !empty($sanitizedUrl)) {
-                        header('Location: ' . SITE_URL . '/p/' . $sanitizedUrl);
+                if ($processed['valid']) {
+                    if ($processed['needsRedirect']) {
+                        header('Location: ' . SITE_URL . '/p/' . $processed['url']);
                         exit;
                     }
                     
-                    $processor = new URLProcessor($sanitizedUrl, false);
+                    $processor = new URLProcessor($processed['url'], false);
                     $processor->process();
                 } else {
                     header('Location: /?message=INVALID_URL');
@@ -154,6 +143,68 @@ class Router
                 require __DIR__ . '/views/manifest.php';
             });
         });
+    }
+
+    /**
+     * Process URL from route parameters - handles all URL normalization cases
+     * @param string $rawUrl The raw URL from route
+     * @param bool $checkRedirect Whether to check if redirect is needed
+     * @return array{valid: bool, url: string, needsRedirect: bool}
+     */
+    private function processUrlRoute(string $rawUrl, bool $checkRedirect = false): array
+    {
+        $queryString = '';
+        if (!empty($_GET)) {
+            $queryParams = [];
+            foreach ($_GET as $key => $value) {
+                if ($key !== 'url' && $key !== 'text') {
+                    $queryParams[$key] = $value;
+                }
+            }
+            if (!empty($queryParams)) {
+                $queryString = '?' . http_build_query($queryParams);
+            }
+        }
+        
+        $url = $rawUrl;
+        
+        $hasScheme = (bool) preg_match('#^https?://#', $url);
+        
+        if ($hasScheme) {
+            $url = preg_replace('#^https?://#', '', $url);
+        }
+        
+        $needsDecoding = (strpos($url, '%') !== false && preg_match('/%[0-9A-Fa-f]{2}/', $url));
+        
+        if ($needsDecoding) {
+            $url = urldecode($url);
+        }
+        
+        $needsRedirect = false;
+        
+        if ($checkRedirect && ($hasScheme || $rawUrl !== $url)) {
+            $needsRedirect = true;
+        }
+        
+        $url = preg_replace('#/+#', '/', $url);
+        
+        $url = 'https://' . $url;
+        
+        if (!filter_var($url, FILTER_VALIDATE_URL)) {
+            return ['valid' => false, 'url' => '', 'needsRedirect' => false];
+        }
+        
+        $sanitizedUrl = $this->sanitizeUrl($url);
+        
+        if (!empty($queryString)) {
+            $sanitizedUrl .= $queryString;
+        }
+        
+        return [
+            'valid' => !empty($sanitizedUrl),
+            'url' => $sanitizedUrl,
+            'needsRedirect' => $needsRedirect
+        ];
     }
 
     /**
@@ -199,8 +250,7 @@ class Router
         $cleanedUrl = preg_replace('/[\x00-\x1F\x7F]/', '', $cleanedUrl);
         $cleanedUrl = filter_var($cleanedUrl, FILTER_SANITIZE_URL);
         
-        // Convert special characters to HTML entities
-        return htmlspecialchars($cleanedUrl, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        return $cleanedUrl;
     }
 
     /**
