@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y \
     psmisc \
     zip \
     git \
+    curl \
     htop \
     cron \
     libzip-dev \
@@ -32,6 +33,10 @@ COPY app/ /app/
 # Install composer packages
 WORKDIR /app
 RUN composer install --no-interaction --optimize-autoloader
+
+# https://github.com/ai-robots-txt/ai.robots.txt
+## nginx-block-ai-bots.conf
+RUN curl -sS https://raw.githubusercontent.com/ai-robots-txt/ai.robots.txt/main/nginx-block-ai-bots.conf -o /app/nginx-block-ai-bots.conf
 
 # Stage 2: Final
 FROM base
